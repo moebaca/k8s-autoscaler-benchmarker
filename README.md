@@ -1,6 +1,6 @@
 # k8s-autoscaler-benchmarker
 
-The `k8s-autoscaler-benchmarker` can be a useful tool for administrators and developers looking to optimize the scaling capabilities of their EKS clusters. It offers a streamlined process for benchmarking the performance of Karpenter and Cluster Autoscaler for EKS workloads. By providing time metrics on EC2 instance initiation, pod readiness, node deregistration, and instance termination times, it enables users to quickly test autoscaler settings such as `consolidateAfter` for Karpenter and `scale-down-unneeded-time` for Cluster Autoscaler. This tool supports customization through a variety of parameters, ensuring that users can adapt the benchmarking process to their specific environment while also providing defaults for quick testing. 
+The `k8s-autoscaler-benchmarker` can be a useful tool for administrators and developers looking to optimize the scaling capabilities of their EKS clusters. It offers a streamlined process for benchmarking the performance of Karpenter and Cluster Autoscaler for EKS workloads. By providing time metrics on EC2 instance initiation, pod readiness, node deregistration, and instance termination times, it enables users to quickly test autoscaler settings such as `consolidateAfter` for Karpenter and `scale-down-unneeded-time`, `node-delete-delay-after-taint`, `scale-down-delay-after-add`, etc. for Cluster Autoscaler. This tool supports customization through a variety of parameters, ensuring that users can adapt the benchmarking process to their specific environment while also providing defaults for quick testing. 
 
 
 ## Currently Supported Features
@@ -88,8 +88,10 @@ Benchmarking with Karpenter using an existing deployment with 3 replicas:
 
 ## Troubleshooting
 
-- If the program prompts you during the scaling of the deployment of a timeout - check for pod error before continuing. There may be an issue with taints/tolerations or labels not matching between the deployment and the node group/nodepool.
-- If you find the program stalls during the scaling of the deployment check to ensure the deployment has all pods in a ready state. If only a few pods are ready, the autoscaler may not scale the deployment to the desired number of replicas due to node group constraints (eg. max size of the node group reached).
+- If the program prompts you of a timeout during the scaling of the deployment please check for pod errors before exiting with 'no':
+  1. There may be an issue with taints/tolerations or labels not matching between the deployment and the node group/nodepool.
+  2. Cluster Autoscaler may not scale node group initially right after creation. I've found manually setting min size and desired capacity to 1 and then back to 0 fixes this (only required right after initial creation).
+- If you find the program stalls with only partial pod startup during the scaling of the deployment the autoscaler may not be able to scale the entire deployment due to node group limits (eg. maximum size of the node group reached). Use less replicas or increase the node group max size to fix this. Always restart the benchmark after making changes to the node group.
 
 ## Contributing
 

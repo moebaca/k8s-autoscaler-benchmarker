@@ -29,3 +29,12 @@ aws eks create-nodegroup --cluster-name $CLUSTER_NAME \
     --labels $LABEL_KEY=$LABEL_VALUE \
     --taints key=$TAINT_KEY,value=$TAINT_VALUE,effect=$TAINT_EFFECT \
     --subnets $SUBNET_IDS
+
+# The following commands are only needed right after node group creation to combat an odd quirk with Cluster Autoscaler
+# where it fails to launch pods onto a new node in the node group if the desiredSize is 0 during the initial node group creation
+
+# Update the node group's minSize and desiredSize to 1
+aws eks update-nodegroup-config --cluster-name $CLUSTER_NAME --nodegroup-name $NODE_GROUP_NAME --scaling-config minSize=1,maxSize=$MAX_SIZE,desiredSize=1
+
+# Update the node group's minSize and desiredSize back to 0
+aws eks update-nodegroup-config --cluster-name $CLUSTER_NAME --nodegroup-name $NODE_GROUP_NAME --scaling-config minSize=0,maxSize=$MAX_SIZE,desiredSize=0
