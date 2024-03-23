@@ -1,0 +1,94 @@
+# Terraform
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+*.tfvars
+*.tfvars.json
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc
+.terraform.lock.hcl
+
+# Go
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+bin/
+
+# Specific project binary
+/k8s-autoscaler-benchmarker
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+
+# Go workspace file
+go.work
+go.work.sum
+
+# Go build
+/build/
+/dist/
+
+# Vendor directory
+/vendor/
+
+# Go debug
+__debug_bin
+
+# Environment
+.env
+.env.local
+.envrc
+.aws/
+.kube/
+.config/
+
+# IDE specific files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.history/
+.devcontainer/
+
+# OS specific files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Kubernetes
+kubeconfig
+*.kubeconfig
+.kube/
+
+# Log files
+*.log
+logs/
+
+# Temporary files
+*.tmp
+*.bak
+*~
+temp/
+tmp/
+
+# AWS
+.aws/credentials
+.aws/config
+
+# Benchmark reports
+benchmark-report-*.json

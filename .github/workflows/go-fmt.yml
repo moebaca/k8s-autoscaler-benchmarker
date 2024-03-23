@@ -1,0 +1,30 @@
+name: Go Format
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  fmt:
+    name: Check formatting
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: true
+      
+      - name: Run gofmt
+        run: |
+          GOFMT_OUTPUT=$(gofmt -l .)
+          if [ -n "$GOFMT_OUTPUT" ]; then
+            echo "The following files need formatting:"
+            echo "$GOFMT_OUTPUT"
+            exit 1
+          fi
+          echo "All Go files are properly formatted!"

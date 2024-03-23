@@ -1,0 +1,30 @@
+name: Go Mod Tidy
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  tidy:
+    name: Verify go.mod tidiness
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: true
+      
+      - name: Go mod verify
+        run: go mod verify
+      
+      - name: Run go mod tidy
+        run: go mod tidy
+      
+      - name: Check for changes
+        run: |
+          git diff --exit-code go.mod go.sum || (echo "::error::Please run 'go mod tidy' to sync dependencies" && exit 1)
