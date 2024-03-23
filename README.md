@@ -13,6 +13,20 @@ The `k8s-autoscaler-benchmarker` can be a useful tool for administrators and dev
 - **Clear Results Summary**: Benchmark outcomes are concisely summarized to `stdout`.
 - **Flexible Environment Configuration**: Supports optional parameters for specifying kubeconfig paths and AWS profiles with default values for ease of use.
 
+## Demo (Cluster Autoscaler example)
+\* Note: Instance ids and ip addresses have been redacted with x's in the below demo video. The real program output will show your actual resource ids.
+
+https://github.com/moebaca/k8s-autoscaler-benchmarker/assets/12791848/133063b0-bd13-468e-8c19-a3efa04f3dfc
+
+```bash
+Benchmarks Summary
+--------------------------------------------
+EC2 Instance Initiation Time: 14.62 seconds
+Pod Readiness Time:           45.43 seconds
+Node Deregistration Time:     135.27 seconds
+Node Termination Time:        131.63 seconds
+--------------------------------------------
+```
 ## Prerequisites
 
 - An active EKS cluster
