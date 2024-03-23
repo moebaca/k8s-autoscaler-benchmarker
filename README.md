@@ -1,6 +1,10 @@
 # k8s-autoscaler-benchmarker
 
-The `k8s-autoscaler-benchmarker` can be a useful tool for administrators and developers looking to optimize the scaling capabilities of their EKS clusters. It offers a streamlined process for benchmarking the performance of Karpenter and Cluster Autoscaler for EKS workloads. By providing time metrics on EC2 instance initiation, pod readiness, node deregistration, and instance termination times, it enables users to quickly test autoscaler settings such as `consolidateAfter` for Karpenter and `scale-down-unneeded-time` for Cluster Autoscaler. This tool supports customization through a variety of parameters, ensuring that users can adapt the benchmarking process to their specific environment while also providing defaults for quick testing. 
+The `k8s-autoscaler-benchmarker` can be a useful tool for administrators and developers looking to optimize the scaling capabilities of their EKS clusters. The tool offers a streamlined process for benchmarking the performance of Karpenter and Cluster Autoscaler for EKS workloads. 
+
+By providing time metrics on EC2 instance initiation, pod readiness, node deregistration, and instance termination times, it enables users to quickly test autoscaler settings such as `consolidateAfter` for Karpenter and `scale-down-unneeded-time`, `node-delete-delay-after-taint`, `scale-down-delay-after-add`, etc. for Cluster Autoscaler. 
+
+This tool also supports customization through a variety of parameters, ensuring that users can adapt the benchmarking process to their specific environment while also providing defaults for quick testing. 
 
 
 ## Currently Supported Features
