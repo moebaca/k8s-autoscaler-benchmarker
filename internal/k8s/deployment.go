@@ -84,7 +84,7 @@ func MonitorProvisioning(clientset kubernetes.Interface, ec2Svc *ec2.EC2, tagKey
 		time.Sleep(1 * time.Second)
 		if time.Since(startTime) >= timeout {
 			for {
-				fmt.Println("Provisioning timeout exceeded. There may be an issue (check pod for errors). Do you want to continue waiting? [yes/no]: ")
+				fmt.Println("Provisioning timeout exceeded. There may be an issue (check pod for errors). Do you want to continue waiting to troubleshoot issue? [yes/no]: ")
 				answer, err := reader.ReadString('\n')
 				if err != nil {
 					log.Fatalf("Failed to read input: %v", err)
@@ -99,7 +99,7 @@ func MonitorProvisioning(clientset kubernetes.Interface, ec2Svc *ec2.EC2, tagKey
 					os.Exit(1)
 				} else if answer == "yes" {
 					startTime = time.Now()
-					fmt.Println("Monitoring provisioning...")
+					fmt.Println("Please input 'no' at next timeout instead of force closing so that cleanup steps can be run by the program...")
 					break
 				} else {
 					fmt.Println("Invalid input. Please enter 'yes' or 'no'.")
@@ -132,21 +132,25 @@ func WaitForPodsReady(clientset kubernetes.Interface, deploymentName, namespace 
 	defer logTicker.Stop()
 
 	for {
+		deployment, err := clientset.AppsV1().Deployments(namespace).Get(context.Background(), deploymentName, metav1.GetOptions{})
+		if err != nil {
+			log.Fatalf("Failed to get updated deployment: %v", err)
+		}
+
+		if deployment.Status.ReadyReplicas == int32(replicas) {
+			fmt.Println("All pods are ready.")
+			break
+		}
+
 		select {
 		case <-logTicker.C:
-			deployment, err := clientset.AppsV1().Deployments(namespace).Get(context.Background(), deploymentName, metav1.GetOptions{})
-			if err != nil {
-				log.Fatalf("Failed to get updated deployment: %v", err)
-			}
-			if deployment.Status.ReadyReplicas == int32(replicas) {
-				fmt.Println("All pods are ready.")
-				return time.Since(startTime)
-			}
 			fmt.Printf("Waiting... %d/%d pods are ready.\n", deployment.Status.ReadyReplicas, replicas)
 		default:
 			time.Sleep(1 * time.Second)
 		}
 	}
+
+	return time.Since(startTime)
 }
 
 // MonitorNodeDeregistration observes the deregistration of nodes from the Kubernetes API based on label selectors.
