@@ -58,8 +58,8 @@ func init() {
 }
 
 // Command k8s-autoscaler-benchmarker orchestrates the setup, execution, and teardown
-// of a Kubernetes deployment to benchmark either Cluster Autoscaler or Karpenter autoscaling functionalities. 
-// It determines the autoscaler type based on input flags, creates or uses an existing deployment, scales it, 
+// of a Kubernetes deployment to benchmark either Cluster Autoscaler or Karpenter autoscaling functionalities.
+// It determines the autoscaler type based on input flags, creates or uses an existing deployment, scales it,
 // and then monitors the provisioning of nodes and readiness of pods.
 // It concludes by scaling down the deployment and monitoring node deregistration and EC2 instance termination,
 // before printing out a summary of the benchmark results to stdout.

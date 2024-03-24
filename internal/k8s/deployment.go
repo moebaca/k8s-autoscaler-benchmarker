@@ -77,7 +77,10 @@ func MonitorProvisioning(clientset kubernetes.Interface, ec2Svc *ec2.EC2, tagKey
 				answer = strings.TrimSpace(answer)
 				if answer == "no" {
 					fmt.Println("Exiting due to user input.")
-					DeleteDeployment(clientset, deploymentName, namespace)
+
+					if deploymentName == "" {
+						DeleteDeployment(clientset, deploymentName, namespace)
+					}
 					os.Exit(1)
 				} else if answer == "yes" {
 					startTime = time.Now()

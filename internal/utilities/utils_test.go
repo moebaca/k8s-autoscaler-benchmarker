@@ -6,9 +6,9 @@ package utilities
 import (
 	"bytes"
 	"os"
+	"strings"
 	"testing"
 	"time"
-	"strings"
 )
 
 // TestPrintSummary checks that PrintSummary writes the expected strings to standard output.
