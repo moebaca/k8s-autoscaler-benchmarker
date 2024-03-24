@@ -17,7 +17,6 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 
-	"github.com/moebaca/k8s-autoscaler-benchmarker/internal/aws"
 	"github.com/moebaca/k8s-autoscaler-benchmarker/internal/k8s"
 	"github.com/moebaca/k8s-autoscaler-benchmarker/internal/utilities"
 )
@@ -101,7 +100,7 @@ func main() {
 		tagKey = "eks:nodegroup-name"
 		tagValue = nodeGroup
 
-		if !aws.CheckNodeGroupEmpty(clientset, nodeGroup) {
+		if !k8s.CheckNodeGroupEmpty(clientset, nodeGroup) {
 			log.Fatalf("Node group '%s' is not empty. Please ensure desired capacity is set to 0 before running the benchmark.", nodeGroup)
 		}
 	} else {

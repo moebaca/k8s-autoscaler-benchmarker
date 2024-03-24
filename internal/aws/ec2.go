@@ -7,15 +7,8 @@
 package aws
 
 import (
-	"context"
-	"fmt"
-	"log"
-
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/ec2"
-
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes"
 )
 
 // GetEC2Instances retrieves a list of EC2 instances based on the specified filter name and value.
@@ -44,19 +37,4 @@ func GetEC2Instances(ec2Svc *ec2.EC2, filterName, filterValue string) ([]*ec2.In
 	})
 
 	return instances, err
-}
-
-// CheckNodeGroupEmpty checks whether a specified node group within a Kubernetes cluster
-// has any nodes. It returns true if the node group is empty, and false otherwise.
-// This check is useful for ensuring that a node group can be safely manipulated without
-// affecting any existing nodes within it.
-func CheckNodeGroupEmpty(clientset kubernetes.Interface, nodeGroupName string) bool {
-	nodes, err := clientset.CoreV1().Nodes().List(context.Background(), metav1.ListOptions{
-		LabelSelector: fmt.Sprintf("eks.amazonaws.com/nodegroup=%s", nodeGroupName),
-	})
-	if err != nil {
-		log.Fatalf("Failed to list nodes: %v", err)
-	}
-
-	return len(nodes.Items) == 0
 }

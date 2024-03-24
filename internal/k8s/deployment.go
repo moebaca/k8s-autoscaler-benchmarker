@@ -27,6 +27,21 @@ import (
 	"github.com/moebaca/k8s-autoscaler-benchmarker/internal/utilities"
 )
 
+// CheckNodeGroupEmpty checks whether a specified node group within a Kubernetes cluster
+// has any nodes. It returns true if the node group is empty, and false otherwise.
+// This check is useful for ensuring that a node group can be safely manipulated without
+// affecting any existing nodes within it.
+func CheckNodeGroupEmpty(clientset kubernetes.Interface, nodeGroupName string) bool {
+	nodes, err := clientset.CoreV1().Nodes().List(context.Background(), metav1.ListOptions{
+		LabelSelector: fmt.Sprintf("eks.amazonaws.com/nodegroup=%s", nodeGroupName),
+	})
+	if err != nil {
+		log.Fatalf("Failed to list nodes: %v", err)
+	}
+
+	return len(nodes.Items) == 0
+}
+
 // ScaleDeployment updates the number of replicas for a specified deployment within a given namespace.
 // It first retrieves the current deployment settings, then updates the replica count based on the input parameter.
 // The function logs whether the deployment was scaled up, down, or remained unchanged.
@@ -144,21 +159,21 @@ func MonitorNodeDeregistration(clientset *kubernetes.Clientset, nodeSelectorKey,
 	fmt.Println("Monitoring node deregistration from k8s API...")
 
 	for {
+		nodes, err := clientset.CoreV1().Nodes().List(context.TODO(), metav1.ListOptions{
+			LabelSelector: fmt.Sprintf("%s=%s", nodeSelectorKey, nodeSelectorValue),
+		})
+		if err != nil {
+			log.Fatalf("Failed to list nodes: %v", err)
+		}
+
+		if len(nodes.Items) == 0 {
+			fmt.Println("All nodes have been deregistered from k8s API.")
+			deregChan <- time.Since(startTime)
+			return
+		}
+
 		select {
 		case <-logTicker.C:
-			nodes, err := clientset.CoreV1().Nodes().List(context.TODO(), metav1.ListOptions{
-				LabelSelector: fmt.Sprintf("%s=%s", nodeSelectorKey, nodeSelectorValue),
-			})
-			if err != nil {
-				log.Fatalf("Failed to list nodes: %v", err)
-			}
-
-			if len(nodes.Items) == 0 {
-				fmt.Println("All nodes have been deregistered from k8s API.")
-				deregChan <- time.Since(startTime)
-				return
-			}
-
 			var nodeNames []string
 			for _, node := range nodes.Items {
 				nodeNames = append(nodeNames, node.Name)
@@ -179,13 +194,21 @@ func MonitorNodeTermination(ec2Svc *ec2.EC2, tagKey, tagValue string, termChan c
 	defer logTicker.Stop()
 
 	for {
+		instances, err := aws.GetEC2Instances(ec2Svc, "tag:"+tagKey, tagValue)
+		if err != nil {
+			log.Printf("Monitoring error: %v", err)
+			time.Sleep(1 * time.Second)
+			continue
+		}
+
+		if len(instances) == 0 {
+			fmt.Println("All EC2 instances have been terminated.")
+			termChan <- time.Since(startTime)
+			return
+		}
+
 		select {
 		case <-logTicker.C:
-			instances, err := aws.GetEC2Instances(ec2Svc, "tag:"+tagKey, tagValue)
-			if err != nil {
-				log.Printf("Monitoring error: %v", err)
-				continue
-			}
 			var instanceDetails []string
 			for _, instance := range instances {
 				detail := fmt.Sprintf("%s (%s)", *instance.InstanceId, *instance.PrivateDnsName)
@@ -195,12 +218,6 @@ func MonitorNodeTermination(ec2Svc *ec2.EC2, tagKey, tagValue string, termChan c
 				fmt.Println("EC2 instances still running:", strings.Join(instanceDetails, ", "))
 			}
 		default:
-			instances, _ := aws.GetEC2Instances(ec2Svc, "tag:"+tagKey, tagValue)
-			if len(instances) == 0 {
-				fmt.Println("All EC2 instances have been terminated.")
-				termChan <- time.Since(startTime)
-				return
-			}
 			time.Sleep(1 * time.Second)
 		}
 	}
