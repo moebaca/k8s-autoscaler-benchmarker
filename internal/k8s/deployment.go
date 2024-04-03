@@ -7,11 +7,8 @@
 package k8s
 
 import (
-	"bufio"
 	"context"
 	"fmt"
-	"log"
-	"os"
 	"strings"
 	"time"
 
@@ -31,25 +28,25 @@ import (
 // has any nodes. It returns true if the node group is empty, and false otherwise.
 // This check is useful for ensuring that a node group can be safely manipulated without
 // affecting any existing nodes within it.
-func CheckNodeGroupEmpty(clientset kubernetes.Interface, nodeGroupName string) bool {
+func CheckNodeGroupEmpty(clientset kubernetes.Interface, nodeGroupName string) (bool, error) {
 	nodes, err := clientset.CoreV1().Nodes().List(context.Background(), metav1.ListOptions{
 		LabelSelector: fmt.Sprintf("eks.amazonaws.com/nodegroup=%s", nodeGroupName),
 	})
 	if err != nil {
-		log.Fatalf("Failed to list nodes: %v", err)
+		return false, fmt.Errorf("Failed to list nodes: %w", err)
 	}
 
-	return len(nodes.Items) == 0
+	return len(nodes.Items) == 0, nil
 }
 
 // ScaleDeployment updates the number of replicas for a specified deployment within a given namespace.
 // It first retrieves the current deployment settings, then updates the replica count based on the input parameter.
 // The function logs whether the deployment was scaled up, down, or remained unchanged.
-func ScaleDeployment(clientset kubernetes.Interface, deploymentName, namespace string, replicas int) {
+func ScaleDeployment(clientset kubernetes.Interface, deploymentName, namespace string, replicas int) error {
 	deploymentsClient := clientset.AppsV1().Deployments(namespace)
 	deployment, err := deploymentsClient.Get(context.Background(), deploymentName, metav1.GetOptions{})
 	if err != nil {
-		log.Fatalf("Failed to get deployment: %v", err)
+		return fmt.Errorf("Failed to get deployment: %w", err)
 	}
 
 	currentReplicas := deployment.Spec.Replicas
@@ -57,7 +54,7 @@ func ScaleDeployment(clientset kubernetes.Interface, deploymentName, namespace s
 	deployment.Spec.Replicas = utilities.Int32Ptr(int32(replicas))
 	_, err = deploymentsClient.Update(context.Background(), deployment, metav1.UpdateOptions{})
 	if err != nil {
-		log.Fatalf("Failed to update deployment: %v", err)
+		return fmt.Errorf("Failed to update deployment: %w", err)
 	}
 
 	if int32(replicas) > *currentReplicas {
@@ -67,65 +64,13 @@ func ScaleDeployment(clientset kubernetes.Interface, deploymentName, namespace s
 	} else {
 		fmt.Printf("Deployment '%s' already has %d replicas. No scaling performed.\n", deploymentName, replicas)
 	}
-}
 
-// MonitorProvisioning tracks the provisioning status of EC2 instances by filtering with tag key and value.
-// It prompts the user for action if provisioning exceeds the predefined timeout.
-// The function logs the provisioning status, including launched instances, until all required instances are in a 'Pending' state or a user intervention occurs.
-func MonitorProvisioning(clientset kubernetes.Interface, ec2Svc *ec2.EC2, tagKey, tagValue, deploymentName, namespace string) time.Duration {
-	fmt.Println("Monitoring provisioning...")
-	startTime := time.Now()
-	var instanceDetails []string
-	reader := bufio.NewReader(os.Stdin)
-
-	timeout := 60 * time.Second
-
-	for {
-		time.Sleep(1 * time.Second)
-		if time.Since(startTime) >= timeout {
-			for {
-				fmt.Println("Provisioning timeout exceeded. There may be an issue (check pod for errors). Do you want to continue waiting to troubleshoot issue? [yes/no]: ")
-				answer, err := reader.ReadString('\n')
-				if err != nil {
-					log.Fatalf("Failed to read input: %v", err)
-				}
-				answer = strings.TrimSpace(answer)
-				if answer == "no" {
-					fmt.Println("Exiting due to user input.")
-
-					if deploymentName == "" {
-						DeleteDeployment(clientset, deploymentName, namespace)
-					}
-					os.Exit(1)
-				} else if answer == "yes" {
-					startTime = time.Now()
-					fmt.Println("Please input 'no' at next timeout instead of force closing so that cleanup steps can be run by the program...")
-					break
-				} else {
-					fmt.Println("Invalid input. Please enter 'yes' or 'no'.")
-				}
-			}
-		}
-
-		instances, err := aws.GetEC2Instances(ec2Svc, "tag:"+tagKey, tagValue)
-		if err != nil {
-			log.Fatalf("Error retrieving EC2 instances: %v", err)
-		}
-
-		if len(instances) > 0 && *instances[0].State.Name == ec2.InstanceStateNamePending {
-			for _, instance := range instances {
-				detail := fmt.Sprintf("%s (%s)", *instance.InstanceId, *instance.PrivateDnsName)
-				instanceDetails = append(instanceDetails, detail)
-			}
-			fmt.Println("Instances launched:", strings.Join(instanceDetails, ", "))
-			return time.Since(startTime)
-		}
-	}
+	return nil
 }
 
 // WaitForPodsReady waits until all pods in a deployment reach a 'Ready' state.
 // It periodically checks the deployment's status and logs the current count of ready pods against the total number of replicas until all pods are ready.
-func WaitForPodsReady(clientset kubernetes.Interface, deploymentName, namespace string, replicas int) time.Duration {
+func WaitForPodsReady(clientset kubernetes.Interface, deploymentName, namespace string, replicas int) (time.Duration, error) {
 	fmt.Println("Waiting for pods to become ready...")
 	startTime := time.Now()
 	logTicker := time.NewTicker(15 * time.Second)
@@ -134,7 +79,7 @@ func WaitForPodsReady(clientset kubernetes.Interface, deploymentName, namespace 
 	for {
 		deployment, err := clientset.AppsV1().Deployments(namespace).Get(context.Background(), deploymentName, metav1.GetOptions{})
 		if err != nil {
-			log.Fatalf("Failed to get updated deployment: %v", err)
+			return 0, fmt.Errorf("Failed to get updated deployment: %w", err)
 		}
 
 		if deployment.Status.ReadyReplicas == int32(replicas) {
@@ -150,12 +95,12 @@ func WaitForPodsReady(clientset kubernetes.Interface, deploymentName, namespace 
 		}
 	}
 
-	return time.Since(startTime)
+	return time.Since(startTime), nil
 }
 
 // MonitorNodeDeregistration observes the deregistration of nodes from the Kubernetes API based on label selectors.
 // It continuously checks and logs the registered nodes until none are left, signaling complete deregistration.
-func MonitorNodeDeregistration(clientset *kubernetes.Clientset, nodeSelectorKey, nodeSelectorValue string, deregChan chan<- time.Duration) {
+func MonitorNodeDeregistration(clientset *kubernetes.Clientset, nodeSelectorKey, nodeSelectorValue string, deregChan chan<- time.Duration, deregErrChan chan<- error) {
 	startTime := time.Now()
 	logTicker := time.NewTicker(15 * time.Second)
 	defer logTicker.Stop()
@@ -167,7 +112,8 @@ func MonitorNodeDeregistration(clientset *kubernetes.Clientset, nodeSelectorKey,
 			LabelSelector: fmt.Sprintf("%s=%s", nodeSelectorKey, nodeSelectorValue),
 		})
 		if err != nil {
-			log.Fatalf("Failed to list nodes: %v", err)
+			deregErrChan <- fmt.Errorf("Failed to list nodes during deregistration: %w", err)
+			return
 		}
 
 		if len(nodes.Items) == 0 {
@@ -191,7 +137,7 @@ func MonitorNodeDeregistration(clientset *kubernetes.Clientset, nodeSelectorKey,
 
 // MonitorNodeTermination keeps an eye on the termination process of EC2 instances, ensuring all tagged instances are terminated.
 // It logs the status of running instances and waits until no tagged instances are left running.
-func MonitorNodeTermination(ec2Svc *ec2.EC2, tagKey, tagValue string, termChan chan<- time.Duration) {
+func MonitorNodeTermination(ec2Svc *ec2.EC2, tagKey, tagValue string, termChan chan<- time.Duration, termErrChan chan<- error) {
 	fmt.Println("Monitoring EC2 instance termination...")
 	startTime := time.Now()
 	logTicker := time.NewTicker(15 * time.Second)
@@ -200,9 +146,8 @@ func MonitorNodeTermination(ec2Svc *ec2.EC2, tagKey, tagValue string, termChan c
 	for {
 		instances, err := aws.GetEC2Instances(ec2Svc, "tag:"+tagKey, tagValue)
 		if err != nil {
-			log.Printf("Monitoring error: %v", err)
-			time.Sleep(1 * time.Second)
-			continue
+			termErrChan <- fmt.Errorf("Failed to list nodes: %w", err)
+			return
 		}
 
 		if len(instances) == 0 {
@@ -229,12 +174,12 @@ func MonitorNodeTermination(ec2Svc *ec2.EC2, tagKey, tagValue string, termChan c
 
 // GenerateDeployment creates a new Kubernetes deployment using specified parameters, including deployment name, namespace, and container configuration.
 // It sets up tolerations and node selectors for the deployment and logs the creation status.
-func GenerateDeployment(clientset kubernetes.Interface, deploymentName, namespace, containerName, containerImage, cpuRequest, tolerationKey, tolerationValue, nodeSelectorKey, nodeSelectorValue string, replicas int) {
+func GenerateDeployment(clientset kubernetes.Interface, deploymentName, namespace, containerName, containerImage, cpuRequest, tolerationKey, tolerationValue, nodeSelectorKey, nodeSelectorValue string, replicas int) error {
 	deploymentsClient := clientset.AppsV1().Deployments(namespace)
 
 	// Ensure deploymentName is not empty
 	if deploymentName == "" {
-		log.Fatal("Deployment name must not be empty")
+		return fmt.Errorf("Deployment name must not be empty!")
 	}
 
 	// Define labels to be used by both the selector and the pod template
@@ -301,14 +246,16 @@ func GenerateDeployment(clientset kubernetes.Interface, deploymentName, namespac
 	fmt.Println("Creating deployment...")
 	result, err := deploymentsClient.Create(context.Background(), deployment, metav1.CreateOptions{})
 	if err != nil {
-		log.Fatalf("Failed to create deployment: %v", err)
+		return fmt.Errorf("Failed to create deployment: %w", err)
 	}
 	fmt.Printf("Created deployment %q in namespace %q.\n", result.GetObjectMeta().GetName(), namespace)
+
+	return nil
 }
 
 // DeleteDeployment removes a specified deployment from a given namespace.
 // It ensures the deployment is deleted according to the specified deletion policy and logs the deletion status.
-func DeleteDeployment(clientset kubernetes.Interface, deploymentName, namespace string) {
+func DeleteDeployment(clientset kubernetes.Interface, deploymentName, namespace string) error {
 	deploymentsClient := clientset.AppsV1().Deployments(namespace)
 
 	fmt.Printf("Deleting deployment %q in namespace %q...\n", deploymentName, namespace)
@@ -316,7 +263,9 @@ func DeleteDeployment(clientset kubernetes.Interface, deploymentName, namespace 
 	if err := deploymentsClient.Delete(context.Background(), deploymentName, metav1.DeleteOptions{
 		PropagationPolicy: &deletePolicy,
 	}); err != nil {
-		log.Fatalf("Failed to delete deployment: %v", err)
+		return fmt.Errorf("Failed to delete deployment: %w", err)
 	}
 	fmt.Printf("Deleted deployment %q.\n", deploymentName)
+
+	return nil
 }

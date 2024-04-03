@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log"
 	"time"
+	"sync"
 
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/ec2"
@@ -17,6 +18,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 
+	"github.com/moebaca/k8s-autoscaler-benchmarker/internal/aws"
 	"github.com/moebaca/k8s-autoscaler-benchmarker/internal/k8s"
 	"github.com/moebaca/k8s-autoscaler-benchmarker/internal/utilities"
 )
@@ -64,6 +66,8 @@ func init() {
 // before printing out a summary of the benchmark results to stdout.
 func main() {
 	var autoscalerType, tagKey, tagValue string
+	var instanceDeregTime, instanceTermTime time.Duration
+	var wg sync.WaitGroup
 
 	kubeconfig := kubeconfigPath
 	if kubeconfig == "" {
@@ -83,11 +87,10 @@ func main() {
 		SharedConfigState: session.SharedConfigEnable,
 		Profile:           awsProfile,
 	}
+
 	awsSession := session.Must(session.NewSessionWithOptions(awsSessionOpts))
 	ec2Svc := ec2.New(awsSession)
-
-	_, err = ec2Svc.DescribeRegions(&ec2.DescribeRegionsInput{})
-	if err != nil {
+	if _, err := ec2Svc.DescribeRegions(&ec2.DescribeRegionsInput{}); err != nil {
 		log.Fatalf("Failed to test AWS profile '%s': %v. Ensure the AWS profile is configured correctly.", awsProfile, err)
 	}
 
@@ -100,7 +103,11 @@ func main() {
 		tagKey = "eks:nodegroup-name"
 		tagValue = nodeGroup
 
-		if !k8s.CheckNodeGroupEmpty(clientset, nodeGroup) {
+		isEmpty, err := k8s.CheckNodeGroupEmpty(clientset, nodeGroup)
+		if err != nil {
+			log.Fatalf("Error checking if node group '%s' is empty: %v", nodeGroup, err)
+		}
+		if !isEmpty {
 			log.Fatalf("Node group '%s' is not empty. Please ensure desired capacity is set to 0 before running the benchmark.", nodeGroup)
 		}
 	} else {
@@ -112,25 +119,71 @@ func main() {
 	if deploymentName == "" {
 		deploymentName = containerName
 		fmt.Printf("No existing deployment name supplied, using '%s' for new deployment.\n", deploymentName)
-		k8s.GenerateDeployment(clientset, deploymentName, namespace, containerName, containerImage, cpuRequest, tolerationKey, tolerationValue, nodeSelectorKey, nodeSelectorValue, replicas)
-		defer k8s.DeleteDeployment(clientset, deploymentName, namespace)
+		if err := k8s.GenerateDeployment(clientset, deploymentName, namespace, containerName, containerImage, cpuRequest, tolerationKey, tolerationValue, nodeSelectorKey, nodeSelectorValue, replicas); err != nil {
+			log.Fatalf("Failed to generate deployment: %v", err)
+		}
+		defer func() {
+			if err := k8s.DeleteDeployment(clientset, deploymentName, namespace); err != nil {
+				log.Printf("Failed to delete deployment: %v", err)
+			}
+		}()
 	} else {
 		fmt.Printf("Using user supplied deployment named '%s' in the namespace '%s'.\n", deploymentName, namespace)
-		k8s.ScaleDeployment(clientset, deploymentName, namespace, replicas)
+		if err := k8s.ScaleDeployment(clientset, deploymentName, namespace, replicas); err != nil {
+			log.Fatalf("Failed to scale up deployment: %v", err)
+		}
 	}
 
-	provisioningTime := k8s.MonitorProvisioning(clientset, ec2Svc, tagKey, tagValue, deploymentName, namespace)
-	podReadinessTime := k8s.WaitForPodsReady(clientset, deploymentName, namespace, replicas)
+	instanceProvisioningTime, err := aws.MonitorInstanceProvisioning(clientset, ec2Svc, tagKey, tagValue, deploymentName, namespace)
+	if err != nil {
+		cleanupErr := k8s.DeleteDeployment(clientset, deploymentName, namespace)
+		if cleanupErr != nil {
+			log.Printf("Failed to delete deployment: %v", cleanupErr)
+		}
+		log.Fatalf("Error during instance provisioning: %v", err)
+	}
 
-	k8s.ScaleDeployment(clientset, deploymentName, namespace, 0)
+	instanceReadinessTime, err := aws.MonitorInstanceReadiness(ec2Svc, tagKey, tagValue)
+	if err != nil {
+		log.Fatalf("Error during instance readiness: %v", err)
+	}
+
+	podReadinessTime, err := k8s.WaitForPodsReady(clientset, deploymentName, namespace, replicas)
+	if err != nil {
+		log.Fatalf("Error during pod readiness: %v", err)
+	}
+
+	if err := k8s.ScaleDeployment(clientset, deploymentName, namespace, 0); err != nil {
+		log.Fatalf("Failed to scale down deployment to 0: %v", err)
+	}
 
 	deregChan := make(chan time.Duration)
 	termChan := make(chan time.Duration)
-	go k8s.MonitorNodeDeregistration(clientset, nodeSelectorKey, nodeSelectorValue, deregChan)
-	go k8s.MonitorNodeTermination(ec2Svc, tagKey, tagValue, termChan)
+	errChan := make(chan error, 2)
 
-	nodeDeregistrationTime := <-deregChan
-	terminationTime := <-termChan
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		k8s.MonitorNodeDeregistration(clientset, nodeSelectorKey, nodeSelectorValue, deregChan, errChan)
+	}()
+	go func() {
+		defer wg.Done()
+		k8s.MonitorNodeTermination(ec2Svc, tagKey, tagValue, termChan, errChan)
+	}()
 
-	utilities.PrintSummary(provisioningTime, podReadinessTime, nodeDeregistrationTime, terminationTime)
+	go func() {
+		wg.Wait()
+		close(errChan)
+	}()
+
+	select {
+	case err := <-errChan:
+		log.Fatalf("Error occurred: %v", err)
+	case duration := <-deregChan:
+		instanceDeregTime = duration
+	case duration := <-termChan:
+		instanceTermTime = duration
+	}
+
+	utilities.PrintSummary(instanceProvisioningTime, instanceReadinessTime, podReadinessTime, instanceDeregTime, instanceTermTime)
 }

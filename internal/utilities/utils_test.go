@@ -18,7 +18,7 @@ func TestPrintSummary(t *testing.T) {
 	r, w, _ := os.Pipe()
 	os.Stdout = w
 
-	PrintSummary(2*time.Second, 1*time.Second, 3*time.Second, 4*time.Second)
+	PrintSummary(2*time.Second, 6*time.Second, 1*time.Second, 3*time.Second, 4*time.Second)
 
 	w.Close()
 	os.Stdout = old
@@ -27,13 +27,15 @@ func TestPrintSummary(t *testing.T) {
 
 	expectedStrings := []string{
 		"Benchmarks Summary",
-		"EC2 Instance Initiation Time:",
+		"Instance Initiation Time:",
 		"2.00 seconds",
+		"Instance Readiness Time:",
+		"6.00 seconds",
 		"Pod Readiness Time:",
 		"1.00 seconds",
-		"Node Deregistration Time:",
+		"Instance Deregistration Time:",
 		"3.00 seconds",
-		"Node Termination Time:",
+		"Instance Termination Time:",
 		"4.00 seconds",
 	}
 
