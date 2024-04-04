@@ -68,6 +68,41 @@ func ScaleDeployment(clientset kubernetes.Interface, deploymentName, namespace s
 	return nil
 }
 
+// MonitorInstanceRegistration monitors the registration of instances as nodes in the Kubernetes API.
+// It waits until nodes with the specified tag key and value appear in the Kubernetes cluster and become ready.
+// The function returns the duration it took for the nodes to become ready for scheduling pods.
+func MonitorInstanceRegistration(clientset *kubernetes.Clientset, labelSelector string, expectedNodeCount int) (time.Duration, error) {
+	fmt.Println("Monitoring instance registration to k8s API...")
+	fmt.Printf("Using label selector: %s\n", labelSelector) // Debugging print
+	startTime := time.Now()
+
+	for {
+			nodes, err := clientset.CoreV1().Nodes().List(context.TODO(), metav1.ListOptions{
+					LabelSelector: labelSelector,
+			})
+			if err != nil {
+					return 0, fmt.Errorf("Failed to list nodes with selector %s: %w", labelSelector, err)
+			}
+
+			readyNodes := 0
+			for _, node := range nodes.Items {
+					for _, condition := range node.Status.Conditions {
+							if condition.Type == corev1.NodeReady && condition.Status == corev1.ConditionTrue {
+									readyNodes++
+									break
+							}
+					}
+			}
+
+			if readyNodes >= expectedNodeCount {
+					fmt.Printf("%d nodes registered to k8s API.\n", readyNodes)
+					return time.Since(startTime), nil
+			}
+
+			time.Sleep(1 * time.Second)
+	}
+}
+
 // WaitForPodsReady waits until all pods in a deployment reach a 'Ready' state.
 // It periodically checks the deployment's status and logs the current count of ready pods against the total number of replicas until all pods are ready.
 func WaitForPodsReady(clientset kubernetes.Interface, deploymentName, namespace string, replicas int) (time.Duration, error) {

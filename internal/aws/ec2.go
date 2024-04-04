@@ -68,82 +68,49 @@ func GetEC2Instances(ec2Svc *ec2.EC2, filterName, filterValue string) ([]*ec2.In
 // MonitorInstanceProvisioning tracks the provisioning status of EC2 instances by filtering with tag key and value.
 // It prompts the user for action if provisioning exceeds the predefined timeout.
 // The function logs the provisioning status, including launched instances, until all required instances are in a 'Pending' state or a user intervention occurs.
-func MonitorInstanceProvisioning(clientset kubernetes.Interface, ec2Svc *ec2.EC2, tagKey, tagValue, deploymentName, namespace string) (time.Duration, error) {
+func MonitorInstanceProvisioning(clientset kubernetes.Interface, ec2Svc *ec2.EC2, tagKey, tagValue, deploymentName, namespace string) (time.Duration, int, error) {
 	fmt.Println("Monitoring EC2 instance provisioning...")
-	startTime := time.Now()
 	var instanceDetails []string
-	reader := bufio.NewReader(os.Stdin)
-
-	timeout := 60 * time.Second
-
-	for {
-		time.Sleep(1 * time.Second)
-		if time.Since(startTime) >= timeout {
-			for {
-				fmt.Println("Provisioning timeout exceeded. There may be an issue (check pod for errors). Do you want to continue waiting to troubleshoot issue? [yes/no]: ")
-				answer, err := reader.ReadString('\n')
-				if err != nil {
-					return 0, fmt.Errorf("Failed to read input: %w", err)
-				}
-				answer = strings.TrimSpace(answer)
-				if answer == "no" {
-					return 0, fmt.Errorf("Exiting due to user input.")
-				} else if answer == "yes" {
-					startTime = time.Now()
-					fmt.Println("Please input 'no' at next timeout instead of force closing so that cleanup steps can be run by the program...")
-					break
-				} else {
-					fmt.Println("Invalid input. Please enter 'yes' or 'no'.")
-				}
-			}
-		}
-
-		instances, err := GetEC2Instances(ec2Svc, "tag:"+tagKey, tagValue)
-		if err != nil {
-			return 0, fmt.Errorf("Error retrieving EC2 instances: %w", err)
-		}
-
-		if len(instances) > 0 && *instances[0].State.Name == ec2.InstanceStateNamePending {
-			for _, instance := range instances {
-				detail := fmt.Sprintf("%s (%s)", *instance.InstanceId, *instance.PrivateDnsName)
-				instanceDetails = append(instanceDetails, detail)
-			}
-			fmt.Println("Instances launched:", strings.Join(instanceDetails, ", "))
-			return time.Since(startTime), nil
-		}
-	}
-}
-
-// MonitorInstanceReadiness tracks the readiness status of EC2 instances by filtering with tag key and value.
-// The function logs the readiness status, including launched instances, until all required instances are in a 'Running' state.
-func MonitorInstanceReadiness(ec2Svc *ec2.EC2, tagKey, tagValue string) (time.Duration, error) {
-	fmt.Println("Monitoring EC2 instance readiness...")
 	startTime := time.Now()
+	reader := bufio.NewReader(os.Stdin)
+	timeout := 60 * time.Second
+	instanceCount := 0
 
 	for {
-		time.Sleep(1 * time.Second)
-
-		instances, err := GetEC2Instances(ec2Svc, "tag:"+tagKey, tagValue)
-		if err != nil {
-			return 0, fmt.Errorf("Error retrieving EC2 instances: %w", err)
-		}
-
-		allInstancesReady := true
-		var instanceDetails []string
-		for _, instance := range instances {
-			if *instance.State.Name == ec2.InstanceStateNameRunning {
-				detail := fmt.Sprintf("%s (%s)", *instance.InstanceId, *instance.PrivateDnsName)
-				instanceDetails = append(instanceDetails, detail)
-			} else {
-				allInstancesReady = false
+			time.Sleep(1 * time.Second)
+			if time.Since(startTime) >= timeout {
+					for {
+							fmt.Println("Provisioning timeout exceeded. There may be an issue (check pod for errors). Do you want to continue waiting to troubleshoot issue? [yes/no]: ")
+							answer, err := reader.ReadString('\n')
+							if err != nil {
+									return time.Since(startTime), instanceCount, fmt.Errorf("Failed to read input: %w", err)
+							}
+							answer = strings.TrimSpace(answer)
+							if answer == "no" {
+									return time.Since(startTime), instanceCount, fmt.Errorf("Exiting due to user input.")
+							} else if answer == "yes" {
+									startTime = time.Now()
+									fmt.Println("Please input 'no' at next timeout instead of force closing so that cleanup steps can be run by the program...")
+									break
+							} else {
+									fmt.Println("Invalid input. Please enter 'yes' or 'no'.")
+							}
+					}
 			}
-		}
 
-		if allInstancesReady {
-			fmt.Println("All instances are in 'running' state: ", strings.Join(instanceDetails, ", "))
-			break
-		}
+			instances, err := GetEC2Instances(ec2Svc, "tag:"+tagKey, tagValue)
+			if err != nil {
+					return time.Since(startTime), instanceCount, fmt.Errorf("Error retrieving EC2 instances: %w", err)
+			}
+
+			if len(instances) > 0 && *instances[0].State.Name == ec2.InstanceStateNamePending {
+					for _, instance := range instances {
+							detail := fmt.Sprintf("%s (%s)", *instance.InstanceId, *instance.PrivateDnsName)
+							instanceDetails = append(instanceDetails, detail)
+					}
+					fmt.Println("Instances launched:", strings.Join(instanceDetails, ", "))
+					instanceCount = len(instances) // Update instance count
+					return time.Since(startTime), instanceCount, nil
+			}
 	}
-
-	return time.Since(startTime), nil
 }

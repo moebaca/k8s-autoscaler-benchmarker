@@ -91,16 +91,18 @@ func initializeClients(kubeconfigPath, awsProfile string) (*kubernetes.Clientset
 // It returns the autoscaler type ("Karpenter" or "Cluster Autoscaler"), along with the tag key and value to be used for monitoring.
 // This function checks the configuration to ensure that only one autoscaler type is specified and logs a fatal error if the configuration is invalid.
 func determineAutoscalerType(config Config, clientset *kubernetes.Clientset) (string, string, string) {
-	var autoscalerType, tagKey, tagValue string
+	var autoscalerType, tagKey, tagValue, labelSelector string
 
 	if config.nodepoolTag != "" && config.nodeGroup == "" {
 		autoscalerType = "Karpenter"
 		tagKey = "karpenter.sh/nodepool"
 		tagValue = config.nodepoolTag
+		labelSelector = fmt.Sprintf("karpenter.sh/nodepool=%s", config.nodepoolTag)
 	} else if config.nodeGroup != "" && config.nodepoolTag == "" {
 		autoscalerType = "Cluster Autoscaler"
 		tagKey = "eks:nodegroup-name"
 		tagValue = config.nodeGroup
+		labelSelector = fmt.Sprintf("eks.amazonaws.com/nodegroup=%s", config.nodeGroup)
 
 		isEmpty, err := k8s.CheckNodeGroupEmpty(clientset, config.nodeGroup)
 		if err != nil {
@@ -115,13 +117,13 @@ func determineAutoscalerType(config Config, clientset *kubernetes.Clientset) (st
 
 	fmt.Printf("Testing with %s...\n", autoscalerType)
 
-	return autoscalerType, tagKey, tagValue
+	return labelSelector, tagKey, tagValue
 }
 
 // executeBenchmark orchestrates the benchmarking process, including deployment generation/scaling, instance provisioning and readiness monitoring, pod readiness, and cleanup.
 // It takes the Kubernetes and AWS EC2 clients, the configuration, the autoscaler type, and the tag key and value for monitoring.
 // This function defers the deletion of the deployment if it was created during the benchmark and handles errors encountered during the monitoring stages.
-func executeBenchmark(clientset *kubernetes.Clientset, ec2Svc *ec2.EC2, config Config, autoscalerType, tagKey, tagValue string) {
+func executeBenchmark(clientset *kubernetes.Clientset, ec2Svc *ec2.EC2, config Config, labelSelector, tagKey, tagValue string) {
 	var instanceDeregTime, instanceTermTime time.Duration
 	var wg sync.WaitGroup
 	var errMsg string
@@ -148,27 +150,27 @@ func executeBenchmark(clientset *kubernetes.Clientset, ec2Svc *ec2.EC2, config C
 	termChan := make(chan time.Duration)
 	errChan := make(chan error, 2)
 
-	instanceProvisioningTime, err := aws.MonitorInstanceProvisioning(clientset, ec2Svc, tagKey, tagValue, config.deploymentName, config.namespace)
+	instanceProvisioningTime, launchedInstances, err := aws.MonitorInstanceProvisioning(clientset, ec2Svc, tagKey, tagValue, config.deploymentName, config.namespace)
 	if err != nil {
 		errMsg = fmt.Sprintf("Error during instance provisioning: %v", err)
-		utilities.cleanupAndFatal(clientset, config.deploymentName, config.namespace, errMsg)
+		cleanupAndFatal(clientset, config.deploymentName, config.namespace, errMsg)
 	}
 
-	instanceReadinessTime, err := aws.MonitorInstanceReadiness(ec2Svc, tagKey, tagValue)
+	instanceRegistrationTime, err := k8s.MonitorInstanceRegistration(clientset, labelSelector, launchedInstances)
 	if err != nil {
-		errMsg = fmt.Sprintf("Error during instance readiness: %v", err)
-		utilities.cleanupAndFatal(clientset, config.deploymentName, config.namespace, errMsg)
+		errMsg = fmt.Sprintf("Error during instance registration: %v", err)
+		cleanupAndFatal(clientset, config.deploymentName, config.namespace, errMsg)
 	}
 
 	podReadinessTime, err := k8s.WaitForPodsReady(clientset, config.deploymentName, config.namespace, config.replicas)
 	if err != nil {
 		errMsg = fmt.Sprintf("Error during pod readiness: %v", err)
-		utilities.cleanupAndFatal(clientset, config.deploymentName, config.namespace, errMsg)
+		cleanupAndFatal(clientset, config.deploymentName, config.namespace, errMsg)
 	}
 
 	if err := k8s.ScaleDeployment(clientset, config.deploymentName, config.namespace, 0); err != nil {
 		errMsg = fmt.Sprintf("Failed to scale down deployment to 0: %v", err)
-		utilities.cleanupAndFatal(clientset, config.deploymentName, config.namespace, errMsg)
+		cleanupAndFatal(clientset, config.deploymentName, config.namespace, errMsg)
 	}
 
 	wg.Add(2)
@@ -190,7 +192,7 @@ func executeBenchmark(clientset *kubernetes.Clientset, ec2Svc *ec2.EC2, config C
 		select {
 		case err := <-errChan:
 			errMsg = fmt.Sprintf("Error occurred during node termination and deregistration: %v", err)
-			utilities.cleanupAndFatal(clientset, config.deploymentName, config.namespace, errMsg)
+			cleanupAndFatal(clientset, config.deploymentName, config.namespace, errMsg)
 		case duration := <-deregChan:
 			instanceDeregTime = duration
 		case duration := <-termChan:
@@ -198,7 +200,18 @@ func executeBenchmark(clientset *kubernetes.Clientset, ec2Svc *ec2.EC2, config C
 		}
 	}
 
-	utilities.PrintSummary(instanceProvisioningTime, instanceReadinessTime, podReadinessTime, instanceDeregTime, instanceTermTime)
+	utilities.PrintSummary(instanceProvisioningTime, instanceRegistrationTime, podReadinessTime, instanceDeregTime, instanceTermTime)
+}
+
+// cleanupAndFatal attempts to delete the specified deployment from the given namespace
+// and logs the provided error message before exiting the program. It is designed to ensure
+// that a generated deployment is cleaned up in the event of a critical failure during execution.
+func cleanupAndFatal(clientset *kubernetes.Clientset, deploymentName, namespace, errMsg string) {
+	log.Printf(errMsg)
+	if err := k8s.DeleteDeployment(clientset, deploymentName, namespace); err != nil {
+		log.Printf("Failed to delete deployment during cleanup: %v", err)
+	}
+	log.Fatalf("Exiting...")
 }
 
 // Command k8s-autoscaler-benchmarker orchestrates the setup, execution, and teardown
@@ -212,7 +225,7 @@ func main() {
 
 	clientset, ec2Svc := initializeClients(config.kubeconfigPath, config.awsProfile)
 
-	autoscalerType, tagKey, tagValue := determineAutoscalerType(config, clientset)
+	labelSelector, tagKey, tagValue := determineAutoscalerType(config, clientset)
 
-	executeBenchmark(clientset, ec2Svc, config, autoscalerType, tagKey, tagValue)
+	executeBenchmark(clientset, ec2Svc, config, labelSelector, tagKey, tagValue)
 }
