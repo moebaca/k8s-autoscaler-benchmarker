@@ -31,6 +31,16 @@ func PrintSummary(provisioningTime, instanceReadinessTime, podReadinessTime, nod
 	fmt.Printf("%s%s--------------------------------------------%s\n\n", colorBold, colorYellow, colorReset)
 }
 
+// cleanupAndFatal attempts to delete the specified deployment from the given namespace
+// and logs the provided error message before exiting the program. It is designed to ensure
+// that a generated deployment is cleaned up in the event of a critical failure during execution.
+func cleanupAndFatal(clientset *kubernetes.Clientset, deploymentName, namespace, errMsg string) {
+	if err := k8s.DeleteDeployment(clientset, deploymentName, namespace); err != nil {
+		log.Printf("Failed to delete deployment during cleanup: %v", err)
+	}
+	log.Fatalf(errMsg)
+}
+
 // Int32Ptr takes an int32 and returns a pointer to it.
 // This function is a convenience for situations where a pointer is required.
 func Int32Ptr(i int32) *int32 { return &i }

@@ -9,8 +9,8 @@ import (
 	"flag"
 	"fmt"
 	"log"
-	"time"
 	"sync"
+	"time"
 
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/ec2"
@@ -23,56 +23,47 @@ import (
 	"github.com/moebaca/k8s-autoscaler-benchmarker/internal/utilities"
 )
 
-var (
-	kubeconfigPath    string
-	awsProfile        string
-	deploymentName    string
-	namespace         string
-	replicas          int
-	nodepoolTag       string
-	nodeGroup         string
-	containerName     string
-	containerImage    string
-	cpuRequest        string
-	tolerationKey     string
-	tolerationValue   string
-	nodeSelectorKey   string
-	nodeSelectorValue string
-)
-
-func init() {
-	flag.StringVar(&kubeconfigPath, "kubeconfig", "", "Path to the kubeconfig file to use for CLI requests.")
-	flag.StringVar(&awsProfile, "aws-profile", "default", "The AWS profile to use.")
-	flag.StringVar(&deploymentName, "deployment", "", "The deployment name to benchmark.")
-	flag.StringVar(&namespace, "namespace", "default", "The namespace of the deployment.")
-	flag.IntVar(&replicas, "replicas", 1, "The number of replicas to scale the deployment to.")
-	flag.StringVar(&nodepoolTag, "nodepool", "", "The Karpenter node pool tag value to monitor.")
-	flag.StringVar(&nodeGroup, "node-group", "", "The ASG node group name to monitor.")
-	flag.StringVar(&containerName, "container-name", "inflate", "The name of the generated deployment and container if an existing deployment isn't supplied.")
-	flag.StringVar(&containerImage, "container-image", "public.ecr.aws/eks-distro/kubernetes/pause:3.7", "The image of the container in the generated deployment if an existing deployment isn't supplied.")
-	flag.StringVar(&cpuRequest, "cpu-request", "1", "The CPU request for the container in the generated deployment if an existing deployment isn't supplied.")
-	flag.StringVar(&tolerationKey, "toleration-key", "eks.autify.com/k8s-autoscaler-benchmarker", "The toleration key for the generated deployment if an existing deployment isn't supplied.")
-	flag.StringVar(&tolerationValue, "toleration-value", "", "The toleration value for the generated deployment if an existing deployment isn't supplied.")
-	flag.StringVar(&nodeSelectorKey, "node-selector-key", "eks.autify.com/k8s-autoscaler-benchmarker", "The node selector key for the generated deployment if an existing deployment isn't supplied.")
-	flag.StringVar(&nodeSelectorValue, "node-selector-value", "true", "The node selector value for the generated deployment if an existing deployment isn't supplied.")
-	flag.Parse()
+type Config struct {
+	kubeconfigPath, awsProfile, deploymentName, namespace string
+	replicas                                              int
+	nodepoolTag, nodeGroup, containerName, containerImage string
+	cpuRequest, tolerationKey, tolerationValue            string
+	nodeSelectorKey, nodeSelectorValue                    string
 }
 
-// Command k8s-autoscaler-benchmarker orchestrates the setup, execution, and teardown
-// of a Kubernetes deployment to benchmark either Cluster Autoscaler or Karpenter autoscaling functionalities.
-// It determines the autoscaler type based on input flags, creates or uses an existing deployment, scales it,
-// and then monitors the provisioning of nodes and readiness of pods.
-// It concludes by scaling down the deployment and monitoring node deregistration and EC2 instance termination,
-// before printing out a summary of the benchmark results to stdout.
-func main() {
-	var autoscalerType, tagKey, tagValue string
-	var instanceDeregTime, instanceTermTime time.Duration
-	var wg sync.WaitGroup
+// parseFlags parses the command line flags and returns a Config struct populated with the command line arguments.
+// This function supports a variety of flags for configuring the Kubernetes client, AWS session, deployment parameters, and autoscaler settings.
+func parseFlags() Config {
+	var config Config
 
+	flag.StringVar(&config.kubeconfigPath, "kubeconfig", "", "Path to the kubeconfig file to use for CLI requests.")
+	flag.StringVar(&config.awsProfile, "aws-profile", "default", "The AWS profile to use.")
+	flag.StringVar(&config.deploymentName, "deployment", "", "The deployment name to benchmark.")
+	flag.StringVar(&config.namespace, "namespace", "default", "The namespace of the deployment.")
+	flag.IntVar(&config.replicas, "replicas", 1, "The number of replicas to scale the deployment to.")
+	flag.StringVar(&config.nodepoolTag, "nodepool", "", "The Karpenter node pool tag value to monitor.")
+	flag.StringVar(&config.nodeGroup, "node-group", "", "The ASG node group name to monitor.")
+	flag.StringVar(&config.containerName, "container-name", "inflate", "The name of the generated deployment and container if an existing deployment isn't supplied.")
+	flag.StringVar(&config.containerImage, "container-image", "public.ecr.aws/eks-distro/kubernetes/pause:3.7", "The image of the container in the generated deployment if an existing deployment isn't supplied.")
+	flag.StringVar(&config.cpuRequest, "cpu-request", "1", "The CPU request for the container in the generated deployment if an existing deployment isn't supplied.")
+	flag.StringVar(&config.tolerationKey, "toleration-key", "eks.autify.com/k8s-autoscaler-benchmarker", "The toleration key for the generated deployment if an existing deployment isn't supplied.")
+	flag.StringVar(&config.tolerationValue, "toleration-value", "", "The toleration value for the generated deployment if an existing deployment isn't supplied.")
+	flag.StringVar(&config.nodeSelectorKey, "node-selector-key", "eks.autify.com/k8s-autoscaler-benchmarker", "The node selector key for the generated deployment if an existing deployment isn't supplied.")
+	flag.StringVar(&config.nodeSelectorValue, "node-selector-value", "true", "The node selector value for the generated deployment if an existing deployment isn't supplied.")
+	flag.Parse()
+
+	return config
+}
+
+// initializeClients initializes and returns Kubernetes and AWS EC2 clients using the provided configuration.
+// It uses the kubeconfigPath for the Kubernetes client and the awsProfile for the AWS session.
+// This function logs a fatal error and exits the program if either client cannot be initialized successfully.
+func initializeClients(kubeconfigPath, awsProfile string) (*kubernetes.Clientset, *ec2.EC2) {
 	kubeconfig := kubeconfigPath
 	if kubeconfig == "" {
 		kubeconfig = clientcmd.RecommendedHomeFile
 	}
+
 	config, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
 	if err != nil {
 		log.Fatalf("Failed to build kubeconfig: %v", err)
@@ -87,28 +78,36 @@ func main() {
 		SharedConfigState: session.SharedConfigEnable,
 		Profile:           awsProfile,
 	}
-
 	awsSession := session.Must(session.NewSessionWithOptions(awsSessionOpts))
 	ec2Svc := ec2.New(awsSession)
 	if _, err := ec2Svc.DescribeRegions(&ec2.DescribeRegionsInput{}); err != nil {
 		log.Fatalf("Failed to test AWS profile '%s': %v. Ensure the AWS profile is configured correctly.", awsProfile, err)
 	}
 
-	if nodepoolTag != "" && nodeGroup == "" {
+	return clientset, ec2Svc
+}
+
+// determineAutoscalerType determines the type of autoscaler to be benchmarked based on the provided configuration.
+// It returns the autoscaler type ("Karpenter" or "Cluster Autoscaler"), along with the tag key and value to be used for monitoring.
+// This function checks the configuration to ensure that only one autoscaler type is specified and logs a fatal error if the configuration is invalid.
+func determineAutoscalerType(config Config, clientset *kubernetes.Clientset) (string, string, string) {
+	var autoscalerType, tagKey, tagValue string
+
+	if config.nodepoolTag != "" && config.nodeGroup == "" {
 		autoscalerType = "Karpenter"
 		tagKey = "karpenter.sh/nodepool"
-		tagValue = nodepoolTag
-	} else if nodeGroup != "" && nodepoolTag == "" {
+		tagValue = config.nodepoolTag
+	} else if config.nodeGroup != "" && config.nodepoolTag == "" {
 		autoscalerType = "Cluster Autoscaler"
 		tagKey = "eks:nodegroup-name"
-		tagValue = nodeGroup
+		tagValue = config.nodeGroup
 
-		isEmpty, err := k8s.CheckNodeGroupEmpty(clientset, nodeGroup)
+		isEmpty, err := k8s.CheckNodeGroupEmpty(clientset, config.nodeGroup)
 		if err != nil {
-			log.Fatalf("Error checking if node group '%s' is empty: %v", nodeGroup, err)
+			log.Fatalf("Error checking if node group '%s' is empty: %v", config.nodeGroup, err)
 		}
 		if !isEmpty {
-			log.Fatalf("Node group '%s' is not empty. Please ensure desired capacity is set to 0 before running the benchmark.", nodeGroup)
+			log.Fatalf("Node group '%s' is not empty. Please ensure desired capacity is set to 0 before running the benchmark.", config.nodeGroup)
 		}
 	} else {
 		log.Fatal("Specify either --nodepool for Karpenter or --node-group for Cluster Autoscaler, not both.")
@@ -116,55 +115,66 @@ func main() {
 
 	fmt.Printf("Testing with %s...\n", autoscalerType)
 
-	if deploymentName == "" {
-		deploymentName = containerName
-		fmt.Printf("No existing deployment name supplied, using '%s' for new deployment.\n", deploymentName)
-		if err := k8s.GenerateDeployment(clientset, deploymentName, namespace, containerName, containerImage, cpuRequest, tolerationKey, tolerationValue, nodeSelectorKey, nodeSelectorValue, replicas); err != nil {
+	return autoscalerType, tagKey, tagValue
+}
+
+// executeBenchmark orchestrates the benchmarking process, including deployment generation/scaling, instance provisioning and readiness monitoring, pod readiness, and cleanup.
+// It takes the Kubernetes and AWS EC2 clients, the configuration, the autoscaler type, and the tag key and value for monitoring.
+// This function defers the deletion of the deployment if it was created during the benchmark and handles errors encountered during the monitoring stages.
+func executeBenchmark(clientset *kubernetes.Clientset, ec2Svc *ec2.EC2, config Config, autoscalerType, tagKey, tagValue string) {
+	var instanceDeregTime, instanceTermTime time.Duration
+	var wg sync.WaitGroup
+	var errMsg string
+
+	if config.deploymentName == "" {
+		config.deploymentName = config.containerName
+		fmt.Printf("No existing deployment name supplied, using '%s' for new deployment.\n", config.deploymentName)
+		if err := k8s.GenerateDeployment(clientset, config.deploymentName, config.namespace, config.containerName, config.containerImage, config.cpuRequest, config.tolerationKey, config.tolerationValue, config.nodeSelectorKey, config.nodeSelectorValue, config.replicas); err != nil {
 			log.Fatalf("Failed to generate deployment: %v", err)
 		}
 		defer func() {
-			if err := k8s.DeleteDeployment(clientset, deploymentName, namespace); err != nil {
+			if err := k8s.DeleteDeployment(clientset, config.deploymentName, config.namespace); err != nil {
 				log.Printf("Failed to delete deployment: %v", err)
 			}
 		}()
 	} else {
-		fmt.Printf("Using user supplied deployment named '%s' in the namespace '%s'.\n", deploymentName, namespace)
-		if err := k8s.ScaleDeployment(clientset, deploymentName, namespace, replicas); err != nil {
+		fmt.Printf("Using user-supplied deployment named '%s' in the namespace '%s'.\n", config.deploymentName, config.namespace)
+		if err := k8s.ScaleDeployment(clientset, config.deploymentName, config.namespace, config.replicas); err != nil {
 			log.Fatalf("Failed to scale up deployment: %v", err)
 		}
-	}
-
-	instanceProvisioningTime, err := aws.MonitorInstanceProvisioning(clientset, ec2Svc, tagKey, tagValue, deploymentName, namespace)
-	if err != nil {
-		cleanupErr := k8s.DeleteDeployment(clientset, deploymentName, namespace)
-		if cleanupErr != nil {
-			log.Printf("Failed to delete deployment: %v", cleanupErr)
-		}
-		log.Fatalf("Error during instance provisioning: %v", err)
-	}
-
-	instanceReadinessTime, err := aws.MonitorInstanceReadiness(ec2Svc, tagKey, tagValue)
-	if err != nil {
-		log.Fatalf("Error during instance readiness: %v", err)
-	}
-
-	podReadinessTime, err := k8s.WaitForPodsReady(clientset, deploymentName, namespace, replicas)
-	if err != nil {
-		log.Fatalf("Error during pod readiness: %v", err)
-	}
-
-	if err := k8s.ScaleDeployment(clientset, deploymentName, namespace, 0); err != nil {
-		log.Fatalf("Failed to scale down deployment to 0: %v", err)
 	}
 
 	deregChan := make(chan time.Duration)
 	termChan := make(chan time.Duration)
 	errChan := make(chan error, 2)
 
+	instanceProvisioningTime, err := aws.MonitorInstanceProvisioning(clientset, ec2Svc, tagKey, tagValue, config.deploymentName, config.namespace)
+	if err != nil {
+		errMsg = fmt.Sprintf("Error during instance provisioning: %v", err)
+		utilities.cleanupAndFatal(clientset, config.deploymentName, config.namespace, errMsg)
+	}
+
+	instanceReadinessTime, err := aws.MonitorInstanceReadiness(ec2Svc, tagKey, tagValue)
+	if err != nil {
+		errMsg = fmt.Sprintf("Error during instance readiness: %v", err)
+		utilities.cleanupAndFatal(clientset, config.deploymentName, config.namespace, errMsg)
+	}
+
+	podReadinessTime, err := k8s.WaitForPodsReady(clientset, config.deploymentName, config.namespace, config.replicas)
+	if err != nil {
+		errMsg = fmt.Sprintf("Error during pod readiness: %v", err)
+		utilities.cleanupAndFatal(clientset, config.deploymentName, config.namespace, errMsg)
+	}
+
+	if err := k8s.ScaleDeployment(clientset, config.deploymentName, config.namespace, 0); err != nil {
+		errMsg = fmt.Sprintf("Failed to scale down deployment to 0: %v", err)
+		utilities.cleanupAndFatal(clientset, config.deploymentName, config.namespace, errMsg)
+	}
+
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		k8s.MonitorNodeDeregistration(clientset, nodeSelectorKey, nodeSelectorValue, deregChan, errChan)
+		k8s.MonitorNodeDeregistration(clientset, config.nodeSelectorKey, config.nodeSelectorValue, deregChan, errChan)
 	}()
 	go func() {
 		defer wg.Done()
@@ -176,14 +186,33 @@ func main() {
 		close(errChan)
 	}()
 
-	select {
-	case err := <-errChan:
-		log.Fatalf("Error occurred: %v", err)
-	case duration := <-deregChan:
-		instanceDeregTime = duration
-	case duration := <-termChan:
-		instanceTermTime = duration
+	for i := 0; i < 2; i++ {
+		select {
+		case err := <-errChan:
+			errMsg = fmt.Sprintf("Error occurred during node termination and deregistration: %v", err)
+			utilities.cleanupAndFatal(clientset, config.deploymentName, config.namespace, errMsg)
+		case duration := <-deregChan:
+			instanceDeregTime = duration
+		case duration := <-termChan:
+			instanceTermTime = duration
+		}
 	}
 
 	utilities.PrintSummary(instanceProvisioningTime, instanceReadinessTime, podReadinessTime, instanceDeregTime, instanceTermTime)
+}
+
+// Command k8s-autoscaler-benchmarker orchestrates the setup, execution, and teardown
+// of a Kubernetes deployment to benchmark either Cluster Autoscaler or Karpenter autoscaling functionalities.
+// It determines the autoscaler type based on input flags, creates or uses an existing deployment, scales it,
+// and then monitors the provisioning of nodes and readiness of pods.
+// It concludes by scaling down the deployment and monitoring node deregistration and EC2 instance termination,
+// before printing out a summary of the benchmark results to stdout.
+func main() {
+	config := parseFlags()
+
+	clientset, ec2Svc := initializeClients(config.kubeconfigPath, config.awsProfile)
+
+	autoscalerType, tagKey, tagValue := determineAutoscalerType(config, clientset)
+
+	executeBenchmark(clientset, ec2Svc, config, autoscalerType, tagKey, tagValue)
 }
