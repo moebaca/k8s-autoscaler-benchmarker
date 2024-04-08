@@ -119,6 +119,7 @@ func determineAutoscalerType(config Config, clientset *kubernetes.Clientset) (st
 	}
 
 	fmt.Printf("Testing with %s...\n", autoscalerType)
+	fmt.Printf("Using node label selector: %s\n", labelSelector)
 
 	return labelSelector, tagKey, tagValue
 }
@@ -219,6 +220,9 @@ func cleanupAndFatal(clientset *kubernetes.Clientset, config Config, errMsg stri
 	log.Fatalf("Exiting...")
 }
 
+// monitorForSigint sets up a listener for SIGINT signals to gracefully terminate the program.
+// Upon receiving a SIGINT signal (e.g., Ctrl+C), it ensures the cleanup of deployments by
+// calling cleanupAndFatal.
 func monitorForSigint(clientset *kubernetes.Clientset, config Config) {
 	sigint := make(chan os.Signal, 1)
 	signal.Notify(sigint, syscall.SIGINT)

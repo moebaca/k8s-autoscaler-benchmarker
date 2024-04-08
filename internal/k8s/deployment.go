@@ -29,7 +29,6 @@ import (
 // This check is useful for ensuring that a node group can be safely manipulated without
 // affecting any existing nodes within it.
 func CheckNodeGroupEmpty(clientset kubernetes.Interface, labelSelector string) (bool, error) {
-	fmt.Printf("Using node label selector: %s\n", labelSelector)
 	nodes, err := clientset.CoreV1().Nodes().List(context.Background(), metav1.ListOptions{
 		LabelSelector: fmt.Sprintf(labelSelector),
 	})
@@ -74,7 +73,6 @@ func ScaleDeployment(clientset kubernetes.Interface, deploymentName, namespace s
 // The function returns the duration it took for the nodes to become ready for scheduling pods.
 func MonitorInstanceRegistration(clientset *kubernetes.Clientset, labelSelector string, expectedNodeCount int) (time.Duration, error) {
 	fmt.Println("Monitoring instance registration to k8s API...")
-	fmt.Printf("Using label selector: %s\n", labelSelector) // Debugging print
 	startTime := time.Now()
 
 	// Setup a timeout mechanism
