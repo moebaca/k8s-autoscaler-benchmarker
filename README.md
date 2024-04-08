@@ -17,8 +17,35 @@ This tool also supports customization through a variety of parameters, ensuring 
 - **Clear Results Summary**: Benchmark outcomes are concisely summarized to `stdout`.
 - **Flexible Environment Configuration**: Supports optional parameters for specifying kubeconfig paths and AWS profiles with default values for ease of use.
 
-## Demo (Cluster Autoscaler example)
+## Demo
 \* Note: Instance ids and ip addresses have been redacted with x's in the below demo video. The real program output will show your actual resource ids.
+
+### Karpenter Example
+The below example uses a user provided Docker image passed in as a parameter. A new deployment will be created since an existing deployment isn't provided by the user. Once the program is terminated the deployment will be deleted.
+
+```bash
+./k8s-autoscaler-benchmarker --nodepool k8s-autoscaler-benchmarker --replicas 2 --container-name redis --container-image redis/redis-stack
+```
+
+https://github.com/moebaca/k8s-autoscaler-benchmarker/assets/12791848/d80173ef-7d7b-426a-a0b1-7d2c82feb619
+
+```bash
+Benchmarks Summary
+--------------------------------------------
+Instance Initiation Time:     3.65 seconds
+Instance Registration Time:   40.22 seconds
+Pod Readiness Time:           31.46 seconds
+Instance Deregistration Time: 20.12 seconds
+Instance Termination Time:    96.24 seconds
+--------------------------------------------
+```
+
+### Cluster Autoscaler Example
+The below example does not use an existing deployment nor passes in a custom Docker image. A new deployment will be created with the default "inflate" deployment. Once the program is terminated the deployment will be deleted.
+
+```bash
+ ./k8s-autoscaler-benchmarker --node-group k8s-autoscaler-benchmarker-ng --replicas 2
+```
 
 https://github.com/moebaca/k8s-autoscaler-benchmarker/assets/12791848/6578dfcb-6c88-49e3-bfe1-3407f82ff9b1
 
@@ -99,10 +126,16 @@ or with Cluster Autoscaler:
 ./k8s-autoscaler-benchmarker --node-group k8s-autoscaler-benchmarker
 ```
 
-Benchmarking with Karpenter using an existing deployment with 3 replicas:
+Benchmarking with Karpenter using an existing deployment in a custom namespace with 3 replicas:
 
 ```bash
 ./k8s-autoscaler-benchmarker --nodepool k8s-autoscaler-benchmarker --deployment my-deployment --namespace my-namespace --replicas 3
+```
+
+Benchmarking with Karpenter using a custom Docker image with 2 replicas:
+
+```bash
+./k8s-autoscaler-benchmarker --nodepool k8s-autoscaler-benchmarker --replicas 2 --container-name redis --container-image redis/redis-stack
 ```
 
 ## Troubleshooting
@@ -111,6 +144,7 @@ Benchmarking with Karpenter using an existing deployment with 3 replicas:
   1. There may be an issue with taints/tolerations or labels not matching between the deployment and the node group/nodepool.
   2. Cluster Autoscaler may not scale node group initially right after creation. I've found manually setting min size and desired capacity to 1 and then back to 0 fixes this (only required right after initial creation).
 - If you find the program stalls with only partial pod startup during the scaling of the deployment the autoscaler may not be able to scale the entire deployment due to node group limits (eg. maximum size of the node group reached). Use less replicas or increase the node group max size to fix this. Always restart the benchmark after making changes to the node group.
+- If you find the program stalls with 0 pods starting up check to ensure there aren't any container ```CrashLoopBackOff``` occuring.
 
 ## Contributing
 
