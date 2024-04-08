@@ -13,6 +13,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/moebaca/k8s-autoscaler-benchmarker/internal/config"
+
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/service/ec2"
@@ -33,6 +35,7 @@ func GetEC2Instances(ec2Svc *ec2.EC2, filterName, filterValue string) ([]*ec2.In
 				Name:   aws.String(filterName),
 				Values: []*string{aws.String(filterValue)},
 			},
+			// Optionally, add more filters here if needed.
 		},
 	}
 
@@ -40,7 +43,7 @@ func GetEC2Instances(ec2Svc *ec2.EC2, filterName, filterValue string) ([]*ec2.In
 		err := ec2Svc.DescribeInstancesPages(input, func(page *ec2.DescribeInstancesOutput, lastPage bool) bool {
 			for _, reservation := range page.Reservations {
 				for _, instance := range reservation.Instances {
-					if *instance.State.Name != ec2.InstanceStateNameTerminated {
+					if instance.LaunchTime.After(config.ProgramStartTime) && *instance.State.Name != ec2.InstanceStateNameTerminated {
 						instances = append(instances, instance)
 					}
 				}

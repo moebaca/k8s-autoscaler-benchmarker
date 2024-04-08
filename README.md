@@ -75,7 +75,7 @@ Execute the tool with the following command, providing any desired options:
 | `deployment`        | The name of the deployment to benchmark. If not supplied, one will be generated.                  | string   | N/A                                                    | No       |
 | `namespace`         | The namespace of the deployment.                                                                  | string   | `default`                                              | No       |
 | `replicas`          | The number of replicas to scale the deployment to.                                                | int      | `1`                                                    | No       |
-| `container-name`    | The name of the container in the generated deployment if an existing deployment isn't supplied.   | string   | `inflate`                                              | No       |
+| `container-name`    | The name of the container AND generated deployment if an existing deployment isn't supplied.   | string   | `inflate`                                              | No       |
 | `container-image`   | The image of the container in the generated deployment if an existing deployment isn't supplied.  | string   | `public.ecr.aws/eks-distro/kubernetes/pause:3.7`       | No       |
 | `cpu-request`       | The CPU request for the container in the generated deployment if an existing deployment isn't supplied. | string | `1` | No |
 | `toleration-key`    | The toleration key for the generated deployment if an existing deployment isn't supplied.         | string   | `eks.autify.com/k8s-autoscaler-benchmarker`            | No       |

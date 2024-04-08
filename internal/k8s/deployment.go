@@ -12,6 +12,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/moebaca/k8s-autoscaler-benchmarker/internal/utilities"
+	"github.com/moebaca/k8s-autoscaler-benchmarker/internal/aws"
+
 	"github.com/aws/aws-sdk-go/service/ec2"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -19,18 +22,16 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
-
-	"github.com/moebaca/k8s-autoscaler-benchmarker/internal/aws"
-	"github.com/moebaca/k8s-autoscaler-benchmarker/internal/utilities"
 )
 
 // CheckNodeGroupEmpty checks whether a specified node group within a Kubernetes cluster
 // has any nodes. It returns true if the node group is empty, and false otherwise.
 // This check is useful for ensuring that a node group can be safely manipulated without
 // affecting any existing nodes within it.
-func CheckNodeGroupEmpty(clientset kubernetes.Interface, nodeGroupName string) (bool, error) {
+func CheckNodeGroupEmpty(clientset kubernetes.Interface, labelSelector string) (bool, error) {
+	fmt.Printf("Using node label selector: %s\n", labelSelector)
 	nodes, err := clientset.CoreV1().Nodes().List(context.Background(), metav1.ListOptions{
-		LabelSelector: fmt.Sprintf("eks.amazonaws.com/nodegroup=%s", nodeGroupName),
+		LabelSelector: fmt.Sprintf(labelSelector),
 	})
 	if err != nil {
 		return false, fmt.Errorf("Failed to list nodes: %w", err)
@@ -76,30 +77,39 @@ func MonitorInstanceRegistration(clientset *kubernetes.Clientset, labelSelector 
 	fmt.Printf("Using label selector: %s\n", labelSelector) // Debugging print
 	startTime := time.Now()
 
-	for {
-			nodes, err := clientset.CoreV1().Nodes().List(context.TODO(), metav1.ListOptions{
-					LabelSelector: labelSelector,
-			})
-			if err != nil {
-					return 0, fmt.Errorf("Failed to list nodes with selector %s: %w", labelSelector, err)
-			}
+	// Setup a timeout mechanism
+	timeout := time.After(10 * time.Minute) // Adjust the timeout duration as needed
+	ticker := time.NewTicker(5 * time.Second) // Check status every 5 seconds
+	defer ticker.Stop()
 
-			readyNodes := 0
-			for _, node := range nodes.Items {
-					for _, condition := range node.Status.Conditions {
-							if condition.Type == corev1.NodeReady && condition.Status == corev1.ConditionTrue {
-									readyNodes++
-									break
+	for {
+			select {
+			case <-timeout:
+					return time.Since(startTime), fmt.Errorf("Timed out waiting for %d nodes to become ready", expectedNodeCount)
+			case <-ticker.C:
+					nodes, err := clientset.CoreV1().Nodes().List(context.TODO(), metav1.ListOptions{
+							LabelSelector: labelSelector,
+					})
+					if err != nil {
+							return 0, fmt.Errorf("Failed to list nodes with selector %s: %w", labelSelector, err)
+					}
+
+					readyNodes := 0
+					for _, node := range nodes.Items {
+							for _, condition := range node.Status.Conditions {
+									if condition.Type == corev1.NodeReady && condition.Status == corev1.ConditionTrue {
+											readyNodes++
+											break // Only count each node once
+									}
 							}
 					}
-			}
 
-			if readyNodes >= expectedNodeCount {
-					fmt.Printf("%d nodes registered to k8s API.\n", readyNodes)
-					return time.Since(startTime), nil
+					if readyNodes >= expectedNodeCount {
+							fmt.Printf("%d nodes registered to k8s API.\n", readyNodes)
+							return time.Since(startTime), nil
+					}
+					// Continues loop until timeout or condition met
 			}
-
-			time.Sleep(1 * time.Second)
 	}
 }
 
@@ -108,7 +118,7 @@ func MonitorInstanceRegistration(clientset *kubernetes.Clientset, labelSelector 
 func WaitForPodsReady(clientset kubernetes.Interface, deploymentName, namespace string, replicas int) (time.Duration, error) {
 	fmt.Println("Waiting for pods to become ready...")
 	startTime := time.Now()
-	logTicker := time.NewTicker(15 * time.Second)
+	logTicker := time.NewTicker(20 * time.Second)
 	defer logTicker.Stop()
 
 	for {

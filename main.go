@@ -11,6 +11,9 @@ import (
 	"log"
 	"sync"
 	"time"
+	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/ec2"
@@ -104,7 +107,7 @@ func determineAutoscalerType(config Config, clientset *kubernetes.Clientset) (st
 		tagValue = config.nodeGroup
 		labelSelector = fmt.Sprintf("eks.amazonaws.com/nodegroup=%s", config.nodeGroup)
 
-		isEmpty, err := k8s.CheckNodeGroupEmpty(clientset, config.nodeGroup)
+		isEmpty, err := k8s.CheckNodeGroupEmpty(clientset, labelSelector)
 		if err != nil {
 			log.Fatalf("Error checking if node group '%s' is empty: %v", config.nodeGroup, err)
 		}
@@ -153,24 +156,24 @@ func executeBenchmark(clientset *kubernetes.Clientset, ec2Svc *ec2.EC2, config C
 	instanceProvisioningTime, launchedInstances, err := aws.MonitorInstanceProvisioning(clientset, ec2Svc, tagKey, tagValue, config.deploymentName, config.namespace)
 	if err != nil {
 		errMsg = fmt.Sprintf("Error during instance provisioning: %v", err)
-		cleanupAndFatal(clientset, config.deploymentName, config.namespace, errMsg)
+		cleanupAndFatal(clientset, config, errMsg)
 	}
 
 	instanceRegistrationTime, err := k8s.MonitorInstanceRegistration(clientset, labelSelector, launchedInstances)
 	if err != nil {
 		errMsg = fmt.Sprintf("Error during instance registration: %v", err)
-		cleanupAndFatal(clientset, config.deploymentName, config.namespace, errMsg)
+		cleanupAndFatal(clientset, config, errMsg)
 	}
 
 	podReadinessTime, err := k8s.WaitForPodsReady(clientset, config.deploymentName, config.namespace, config.replicas)
 	if err != nil {
 		errMsg = fmt.Sprintf("Error during pod readiness: %v", err)
-		cleanupAndFatal(clientset, config.deploymentName, config.namespace, errMsg)
+		cleanupAndFatal(clientset, config, errMsg)
 	}
 
 	if err := k8s.ScaleDeployment(clientset, config.deploymentName, config.namespace, 0); err != nil {
 		errMsg = fmt.Sprintf("Failed to scale down deployment to 0: %v", err)
-		cleanupAndFatal(clientset, config.deploymentName, config.namespace, errMsg)
+		cleanupAndFatal(clientset, config, errMsg)
 	}
 
 	wg.Add(2)
@@ -192,7 +195,7 @@ func executeBenchmark(clientset *kubernetes.Clientset, ec2Svc *ec2.EC2, config C
 		select {
 		case err := <-errChan:
 			errMsg = fmt.Sprintf("Error occurred during node termination and deregistration: %v", err)
-			cleanupAndFatal(clientset, config.deploymentName, config.namespace, errMsg)
+			cleanupAndFatal(clientset, config, errMsg)
 		case duration := <-deregChan:
 			instanceDeregTime = duration
 		case duration := <-termChan:
@@ -206,12 +209,25 @@ func executeBenchmark(clientset *kubernetes.Clientset, ec2Svc *ec2.EC2, config C
 // cleanupAndFatal attempts to delete the specified deployment from the given namespace
 // and logs the provided error message before exiting the program. It is designed to ensure
 // that a generated deployment is cleaned up in the event of a critical failure during execution.
-func cleanupAndFatal(clientset *kubernetes.Clientset, deploymentName, namespace, errMsg string) {
+func cleanupAndFatal(clientset *kubernetes.Clientset, config Config, errMsg string) {
 	log.Printf(errMsg)
-	if err := k8s.DeleteDeployment(clientset, deploymentName, namespace); err != nil {
-		log.Printf("Failed to delete deployment during cleanup: %v", err)
+	if config.deploymentName == "" {
+		if err := k8s.DeleteDeployment(clientset, config.containerName, config.namespace); err != nil {
+			log.Printf("Failed to delete deployment during cleanup: %v", err)
+		}
 	}
 	log.Fatalf("Exiting...")
+}
+
+func monitorForSigint(clientset *kubernetes.Clientset, config Config) {
+	sigint := make(chan os.Signal, 1)
+	signal.Notify(sigint, syscall.SIGINT)
+
+	go func() {
+			<-sigint
+			errMsg := fmt.Sprintf("Received SIGINT, cleaning up...")
+			cleanupAndFatal(clientset, config, errMsg)
+	}()
 }
 
 // Command k8s-autoscaler-benchmarker orchestrates the setup, execution, and teardown
@@ -224,6 +240,8 @@ func main() {
 	config := parseFlags()
 
 	clientset, ec2Svc := initializeClients(config.kubeconfigPath, config.awsProfile)
+
+	monitorForSigint(clientset, config)
 
 	labelSelector, tagKey, tagValue := determineAutoscalerType(config, clientset)
 
