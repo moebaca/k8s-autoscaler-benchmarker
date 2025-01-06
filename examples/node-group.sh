@@ -1,10 +1,10 @@
 #!/bin/bash
 
 # Variables
-CLUSTER_NAME="stg-eks-u3SY42jm" # Change this to your EKS cluster name
+CLUSTER_NAME="" # Change this to your EKS cluster name
 NODE_GROUP_NAME="k8s-autoscaler-benchmarker-ng"
 INSTANCE_TYPE="t3.medium"
-ROLE_ARN="arn:aws:iam::700877533127:role/stg-mng-worker-dynamic-eks-node-group-20230126013903975900000007" # Update ACCOUNT_ID and ROLE_NAME for Node Group
+ROLE_ARN="" # Update ACCOUNT_ID and ROLE_NAME for Node Group
 AMI_TYPE="BOTTLEROCKET_x86_64"
 CAPACITY_TYPE="SPOT"
 DESIRED_SIZE=0
@@ -16,7 +16,7 @@ TAINT_KEY="eks.autify.com/k8s-autoscaler-benchmarker"
 TAINT_VALUE=""
 TAINT_EFFECT="NO_SCHEDULE"
 TAINT_EFFECT_YAML="NoSchedule"
-SUBNET_IDS=("subnet-0c441738a4844d39a" "subnet-0c9aa75c358464c76") # Update with your subnet IDs
+SUBNET_IDS=("" "") # Update with your subnet IDs
 
 # Create the managed node group
 aws eks create-nodegroup --cluster-name $CLUSTER_NAME \
